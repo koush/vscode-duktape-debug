@@ -306,6 +306,7 @@ class PropertySet
 {
     public type        :PropertySetType;
     public handle      :number;
+    public parent?     :PropertySet;
     public scope       :DukScope;
     public displayName :string;
 
@@ -681,6 +682,7 @@ export class DukDebugSession extends DebugSession
         response.body.supportsFunctionBreakpoints      = false;
         response.body.supportsEvaluateForHovers        = true;
         response.body.supportsStepBack                 = false;
+        response.body.supportsSetVariable              = true;
 
         this.sendResponse( response );
     }
@@ -1296,6 +1298,40 @@ export class DukDebugSession extends DebugSession
     }
     
     //-----------------------------------------------------------
+    private getVariableName( argName:string, properties:PropertySet ) : string
+    {
+        let getVariableNamePrefix = function(properties:PropertySet) : Array<string> {
+            if ( !properties.parent )
+            {
+                return [];
+            }
+            let variable = properties.parent.variables.find( parentVar => {
+                return parentVar.variablesReference === properties.handle
+            });
+            return getVariableNamePrefix(properties.parent).concat(variable.name);
+        };
+        return getVariableNamePrefix(properties).concat(argName).join(".");
+    }
+    
+    //-----------------------------------------------------------
+    protected setVariableRequest( response: DebugProtocol.SetVariableResponse, args:DebugProtocol.SetVariableArguments)
+    {
+        this.dbgLog( "[FE] setVariableRequest" );
+        
+        var properties = this._dbgState.varHandles.get( args.variablesReference );
+        var stackFrame = properties.scope.stackFrame;
+        let variableName = this.getVariableName(args.name, properties);
+        let expression = variableName + " = " + args.value;
+        
+        this._dukProto.requestEval( expression, stackFrame.depth );
+        response.body = {
+            value: args.value
+        };
+        
+        this.sendResponse( response );
+    }
+    
+    //-----------------------------------------------------------
     protected evaluateRequest( response:DebugProtocol.EvaluateResponse, args:DebugProtocol.EvaluateArguments ):void
     {
         this.dbgLog( "[FE] evaluateRequest" );
@@ -1857,6 +1893,7 @@ export class DukDebugSession extends DebugSession
                     variable.value = objPropSet.displayName;
                     
                     objPropSet.handle           = this._dbgState.varHandles.create( objPropSet );
+                    objPropSet.parent           = propSet;
                     variable.variablesReference = objPropSet.handle;
                     
                     // Register with the pointer map
